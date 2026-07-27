@@ -1,5 +1,5 @@
-import { WeekOffSwapInboxView } from "@/widgets/week-off-swap-inbox";
+import { WeekOffSwapPageView } from "@/widgets/week-off-swap-inbox";
 
 export default function WeekOffSwapsPage() {
-  return <WeekOffSwapInboxView />;
+  return <WeekOffSwapPageView />;
 }

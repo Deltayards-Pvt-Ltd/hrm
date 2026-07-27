@@ -2,7 +2,7 @@
 
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
 
-const PAGE_SIZES = [25, 50, 100] as const;
+const PAGE_SIZES = [25, 50, 100, 200, 500] as const;
 
 export type AttendancePaginationLabels = {
   showing: string;

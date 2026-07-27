@@ -74,4 +74,5 @@ This supports modal detail view without losing list context, while preserving de
 2. Add React Query provider and hook ownership split:
    - entity queries in `entities/*/api`
    - feature mutations in `features/*`
-3. Add `shared/permissions` and TanStack Query key factories when those concerns land.
+3. ~~Add `shared/permissions`~~ — done (`shared/permissions`, nav + page gates via `hrm:*`).
+4. Add TanStack Query key factories when caching lands.

@@ -21,6 +21,13 @@ export function SignInForm() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const nextPath = searchParams.get("next")?.trim() || "/";
+  const accessError = searchParams.get("error");
+
+  useEffect(() => {
+    if (accessError === "no_hrm_access") {
+      setFormError("No HRM access for this role. Ask an admin to grant hrm permissions.");
+    }
+  }, [accessError]);
 
   useEffect(() => {
     if (isBootstrapping || !isAuthenticated) return;

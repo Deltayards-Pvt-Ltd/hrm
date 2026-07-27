@@ -40,6 +40,8 @@ export type FetchAttendanceAdminAllParams = {
   limit?: number;
   /** Restrict to these user ids (e.g. monthly matrix page). */
   userIds?: string[];
+  /** Scope roster to a CRM project team (deltadb `projectId`). */
+  projectId?: string;
 };
 
 /**
@@ -50,7 +52,7 @@ export async function fetchAttendanceAdminAll(
   params: FetchAttendanceAdminAllParams,
   init?: RequestInit,
 ): Promise<AttendanceAdminAllResponse> {
-  const { filter, page = 1, userIds } = params;
+  const { filter, page = 1, userIds, projectId } = params;
   const defaultLimit = filter.kind === "range" ? 500 : 200;
   const limit = params.limit ?? defaultLimit;
 
@@ -69,15 +71,65 @@ export async function fetchAttendanceAdminAll(
   }
 
   const qs = new URLSearchParams({
-    startDate: start.toISOString(),
-    endDate: end.toISOString(),
     page: String(page),
     limit: String(limit),
   });
+
+  // Prefer calendar `date=` for single day — matches Attendance.date IST day keys exactly
+  if (filter.kind === "day") {
+    qs.set("date", localYmd(filter.day));
+  } else {
+    qs.set("startDate", start.toISOString());
+    qs.set("endDate", end.toISOString());
+  }
+
   if (userIds?.length) {
     qs.set("userIds", userIds.join(","));
   }
+  if (projectId) {
+    qs.set("projectId", projectId);
+  }
   return apiFetch<AttendanceAdminAllResponse>(`/api/attendance/admin/all?${qs.toString()}`, init);
+}
+
+/**
+ * Load every attendance record for a day/range (paginates until exhausted).
+ * Use for daily log so "today" isn't truncated at page 1 / limit 25.
+ */
+export async function fetchAttendanceAdminAllPages(
+  params: Omit<FetchAttendanceAdminAllParams, "page" | "limit"> & { pageLimit?: number },
+  init?: RequestInit,
+): Promise<AttendanceAdminAllResponse> {
+  const pageLimit = params.pageLimit ?? 500;
+  const first = await fetchAttendanceAdminAll(
+    { ...params, page: 1, limit: pageLimit },
+    init,
+  );
+  const attendance = [...first.attendance];
+  const totalPages = Math.max(1, first.pagination?.totalPages ?? 1);
+  for (let page = 2; page <= totalPages; page++) {
+    const res = await fetchAttendanceAdminAll(
+      { ...params, page, limit: pageLimit },
+      init,
+    );
+    attendance.push(...res.attendance);
+    if (!res.attendance.length) break;
+  }
+  return {
+    ...first,
+    attendance,
+    pagination: {
+      ...first.pagination,
+      page: 1,
+      limit: attendance.length || pageLimit,
+      total: attendance.length || first.pagination?.total || 0,
+      totalPages: 1,
+    },
+    summary: {
+      ...first.summary,
+      total: attendance.length || first.summary?.total || 0,
+    },
+  };
 }
 
 /** IST calendar month bounds for matrix punch fetch (aligns with summary API). */
@@ -95,6 +147,65 @@ export function istMonthDateRange(year: number, month: number): { from: Date; to
   return { from: new Date(startIso), to: new Date(endIso) };
 }
 
+export type LiveAttendanceUser = {
+  _id?: string;
+  id?: string;
+  name?: string;
+  email?: string;
+  mobile?: string;
+  role?: string;
+  level?: string | number;
+};
+
+export type LiveAttendanceDashboard = {
+  date: string;
+  dateRange: { startDate: string; endDate: string } | null;
+  projectId: string | null;
+  summary: {
+    totalUsers: number;
+    checkedIn: number;
+    checkedOut: number;
+    absent: number;
+    onBreak: number;
+  };
+  checkedInUsers: Array<{
+    user?: LiveAttendanceUser | null;
+    checkInTime?: string;
+    checkInAddress?: string | null;
+    checkInSelfie?: string | null;
+    hoursWorked?: string | number;
+    isOnBreak?: boolean;
+  }>;
+  checkedOutUsers: Array<{
+    user?: LiveAttendanceUser | null;
+    checkInTime?: string;
+    checkOutTime?: string;
+    checkInAddress?: string | null;
+    checkOutAddress?: string | null;
+    totalHours?: number;
+  }>;
+  absentUsers: LiveAttendanceUser[];
+};
+
+/**
+ * Real-time attendance dashboard (CRM + HRM).
+ * deltadb `GET /api/attendance/admin/live?startDate&endDate&projectId`
+ */
+export async function fetchLiveAttendanceDashboard(params?: {
+  /** YYYY-MM-DD calendar day (IST-aligned via startDate/endDate). */
+  date?: string;
+  projectId?: string;
+}): Promise<LiveAttendanceDashboard> {
+  const qs = new URLSearchParams();
+  if (params?.date) {
+    qs.set("startDate", params.date);
+    qs.set("endDate", params.date);
+  }
+  if (params?.projectId) qs.set("projectId", params.projectId);
+  const q = qs.toString();
+  return apiFetch<LiveAttendanceDashboard>(`/api/attendance/admin/live${q ? `?${q}` : ""}`);
+}
+
 /**
  * Matrix punches: same endpoint as daily log, but full IST month — no `userIds` filter.
  * (Filtering by page userIds + limit=100 was dropping rows like today's check-in.)
@@ -102,14 +213,17 @@ export function istMonthDateRange(year: number, month: number): { from: Date; to
 export async function fetchAttendancePunchesForMatrix(params: {
   year: number;
   month: number;
+  projectId?: string;
 }): Promise<AttendanceAdminAllResponse> {
   const { from, to } = istMonthDateRange(params.year, params.month);
   const pageLimit = 5000;
+  const projectId = params.projectId;
 
   const first = await fetchAttendanceAdminAll({
     filter: { kind: "range", from, to },
     page: 1,
     limit: pageLimit,
+    projectId,
   });
 
   const attendance = [...first.attendance];
@@ -119,6 +233,7 @@ export async function fetchAttendancePunchesForMatrix(params: {
       filter: { kind: "range", from, to },
       page,
       limit: pageLimit,
+      projectId,
     });
     attendance.push(...res.attendance);
     if (!res.attendance.length) break;

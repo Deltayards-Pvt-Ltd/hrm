@@ -1,6 +1,5 @@
-import { redirect } from "next/navigation";
+import { MyPayslipsPanel } from "@/widgets/payroll";
 
-/** Payslip tab default — open first mock employee. */
 export default function PayslipIndexPage() {
-  redirect("/payroll/payslip/1");
+  return <MyPayslipsPanel />;
 }

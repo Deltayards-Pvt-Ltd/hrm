@@ -30,11 +30,11 @@ export function NavCollapse({ label, Icon, children, trailing }: Props) {
   }, [groupActive]);
 
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex shrink-0 flex-col gap-0.5">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`relative flex h-11 w-full items-center gap-3 rounded-[10px] pl-[14px] pr-3 text-left text-[13px] font-medium tracking-wide transition-colors duration-150 ${
+        className={`relative flex h-11 min-h-11 w-full shrink-0 items-center gap-3 rounded-[10px] pl-[14px] pr-3 text-left text-[13px] font-medium tracking-wide transition-colors duration-150 ${
           groupActive
             ? "bg-white/[0.06] text-white"
             : "text-slate-400 hover:bg-white/[0.045] hover:text-slate-100"

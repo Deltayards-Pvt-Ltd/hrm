@@ -22,6 +22,7 @@ import {
   setStoredSession,
 } from "@/lib/auth/session-storage";
 import type { AppUser } from "@/lib/auth/types";
+import { hasAnyHrmAccess } from "@/shared/permissions";
 
 export type AuthContextValue = {
   user: AppUser | null;
@@ -158,10 +159,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setStoredSession(token, JSON.stringify(raw), remember);
       setAccessToken(token);
       setUser(normalized);
-      await refreshUser();
+
+      const meRes = await authBffMe(token);
+      if (meRes.ok) {
+        const meData = await parseJsonSafe(meRes);
+        persistUserFromMe(meData);
+        const meUser = normalizeAppUser(meData.user ?? meData);
+        if (meUser && !hasAnyHrmAccess(meUser)) {
+          clearStoredSession();
+          setUser(null);
+          setAccessToken(null);
+          return {
+            ok: false,
+            message: "No HRM access for this role. Ask an admin to grant hrm permissions.",
+          };
+        }
+      } else if (meRes.status === 401 || meRes.status === 403) {
+        clearStoredSession();
+        setUser(null);
+        setAccessToken(null);
+        return {
+          ok: false,
+          message: "No HRM access for this role. Ask an admin to grant hrm permissions.",
+        };
+      }
+
       return { ok: true };
     },
-    [refreshUser],
+    [persistUserFromMe],
   );
 
   const value = useMemo<AuthContextValue>(

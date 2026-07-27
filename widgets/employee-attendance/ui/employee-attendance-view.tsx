@@ -34,9 +34,11 @@ import {
   buildAttendanceGrid,
   endOfLocalMonth,
   fetchAttendanceAdminAll,
+  fetchAttendanceAdminAllPages,
   fetchAttendancePunchesForMatrix,
   fetchCampOffMatrix,
   fetchAttendanceSummary,
+  fetchLiveAttendanceDashboard,
   mapAdminAttendanceToRows,
   mergeAttendanceRecords,
   gridEmployeesFromPicker,
@@ -48,6 +50,7 @@ import {
 } from "@/entities/attendance";
 import { useAttendanceRules } from "@/features/attendance";
 import { fetchPickerUsers } from "@/entities/user";
+import { fetchHrmProjects, type HrmProjectOption } from "@/entities/employee/api/project-queries";
 import { AttendanceMatrixTable } from "@/widgets/employee-attendance/ui/attendance-matrix-table";
 import type { AttendanceAdminAllResponse } from "@/entities/attendance/model/types";
 import type { DaySummaryRow } from "@/entities/attendance/api/summary-queries";
@@ -256,6 +259,9 @@ export function EmployeeAttendanceView() {
   const [rangeFrom, setRangeFrom] = useState<Date>(() => initialRange().from);
   const [rangeTo, setRangeTo] = useState<Date>(() => initialRange().to);
   const [matrixMonth, setMatrixMonth] = useState(() => startOfLocalMonth(new Date()));
+  const [projectId, setProjectId] = useState("");
+  const [projects, setProjects] = useState<HrmProjectOption[]>([]);
+  const [livePolling, setLivePolling] = useState(false);
 
   const apiReady = isApiConfigured();
   const {
@@ -266,6 +272,7 @@ export function EmployeeAttendanceView() {
   } = useAttendanceRules();
 
   const [liveRows, setLiveRows] = useState<AttendanceRow[]>([]);
+  const [allLiveRows, setAllLiveRows] = useState<AttendanceRow[]>([]);
   const [summary, setSummary] = useState<{
     total: number;
     checkedIn: number;
@@ -274,7 +281,11 @@ export function EmployeeAttendanceView() {
   } | null>(null);
   const [pagination, setPagination] = useState<AttendanceAdminAllResponse["pagination"] | null>(null);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(100);
+  const pageRef = useRef(page);
+  const pageSizeRef = useRef(pageSize);
+  pageRef.current = page;
+  pageSizeRef.current = pageSize;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -312,35 +323,102 @@ export function EmployeeAttendanceView() {
 
   const filterKey = useMemo(
     () =>
-      `${filterMode}|${toDateInputValue(selected)}|${toDateInputValue(rangeFrom)}|${toDateInputValue(rangeTo)}`,
-    [filterMode, selected, rangeFrom, rangeTo],
+      `${filterMode}|${toDateInputValue(selected)}|${toDateInputValue(rangeFrom)}|${toDateInputValue(rangeTo)}|${projectId}`,
+    [filterMode, selected, rangeFrom, rangeTo, projectId],
   );
 
   useLayoutEffect(() => {
     setPage(1);
   }, [filterKey, pageSize]);
 
-  const loadLive = useCallback(async () => {
+  useEffect(() => {
+    if (!apiReady) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await fetchHrmProjects();
+        if (!cancelled) setProjects(list);
+      } catch {
+        if (!cancelled) setProjects([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiReady]);
+
+  const loadLive = useCallback(async (opts?: { silent?: boolean }) => {
     if (!apiReady || !attendanceRules) return;
-    setLoading(true);
-    setError(null);
-    setSummary(null);
-    setPagination(null);
-    setLiveRows([]);
+    const silent = opts?.silent === true;
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+      setSummary(null);
+      setPagination(null);
+      setLiveRows([]);
+      setAllLiveRows([]);
+    }
     try {
-      const res = await fetchAttendanceAdminAll({
-        filter: filterForApi,
-        page,
-        limit: pageSize,
-      });
-      setLiveRows(
-        mapAdminAttendanceToRows(res.attendance, {
-          includeWorkDate: filterMode === "range",
+      const scopedProjectId = projectId || undefined;
+      const currentPage = pageRef.current;
+      const currentPageSize = pageSizeRef.current;
+
+      // Day mode: pull every page so today's log isn't stuck at limit=25/100
+      if (filterMode === "day") {
+        const res = await fetchAttendanceAdminAllPages({
+          filter: filterForApi,
+          projectId: scopedProjectId,
+          pageLimit: 500,
+        });
+        const mapped = mapAdminAttendanceToRows(res.attendance, {
+          includeWorkDate: false,
           rules: attendanceRules,
-        }),
-      );
-      setSummary(res.summary);
-      setPagination(res.pagination);
+        });
+        setAllLiveRows(mapped);
+
+        try {
+          const live = await fetchLiveAttendanceDashboard({
+            date: toDateInputValue(selected),
+            projectId: scopedProjectId,
+          });
+          setSummary({
+            total: live.summary.totalUsers,
+            checkedIn: live.summary.checkedIn,
+            checkedOut: live.summary.checkedOut,
+            absent: live.summary.absent,
+          });
+        } catch {
+          setSummary({
+            total: mapped.length,
+            checkedIn: mapped.filter((r) => r.status === "checked_in").length,
+            checkedOut: mapped.filter(
+              (r) =>
+                r.status === "checked_out" ||
+                r.status === "present" ||
+                r.status === "late" ||
+                r.status === "half_day",
+            ).length,
+            absent: mapped.filter((r) => r.status === "absent").length,
+          });
+        }
+      } else {
+        const res = await fetchAttendanceAdminAll({
+          filter: filterForApi,
+          page: currentPage,
+          limit: currentPageSize,
+          projectId: scopedProjectId,
+        });
+        setAllLiveRows([]);
+        setLiveRows(
+          mapAdminAttendanceToRows(res.attendance, {
+            includeWorkDate: true,
+            rules: attendanceRules,
+          }),
+        );
+        setPagination(res.pagination);
+        setSummary(res.summary);
+      }
+      if (silent) setError(null);
     } catch (e) {
       const msg =
         e instanceof ApiError
@@ -348,17 +426,72 @@ export function EmployeeAttendanceView() {
           : e instanceof Error
             ? e.message
             : en.errors.generic;
-      setError(msg);
+      if (!silent) setError(msg);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [apiReady, attendanceRules, filterForApi, filterMode, page, pageSize]);
+  }, [apiReady, attendanceRules, filterForApi, filterMode, projectId, selected]);
+
+  // Client-side page slice when we already hold the full day set
+  useEffect(() => {
+    if (filterMode !== "day") return;
+    if (allLiveRows.length === 0) {
+      setLiveRows([]);
+      setPagination(null);
+      return;
+    }
+    const total = allLiveRows.length;
+    const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    if (safePage !== page) {
+      setPage(safePage);
+      return;
+    }
+    const start = (safePage - 1) * pageSize;
+    setLiveRows(allLiveRows.slice(start, start + pageSize));
+    setPagination({
+      page: safePage,
+      limit: pageSize,
+      total,
+      totalPages,
+    });
+  }, [filterMode, allLiveRows, page, pageSize]);
 
   useEffect(() => {
     if (viewMode !== "log") return;
     if (!apiReady || rulesLoading || !attendanceRules) return;
     void loadLive();
-  }, [viewMode, loadLive, apiReady, rulesLoading, attendanceRules]);
+    // Range mode: also refetch when page/pageSize change (day mode paginates client-side)
+  }, [
+    viewMode,
+    loadLive,
+    apiReady,
+    rulesLoading,
+    attendanceRules,
+    filterMode === "range" ? page : 0,
+    filterMode === "range" ? pageSize : 0,
+  ]);
+
+  // Real-time: poll live + log while viewing today
+  useEffect(() => {
+    if (viewMode !== "log" || filterMode !== "day") {
+      setLivePolling(false);
+      return;
+    }
+    if (!apiReady || !attendanceRules) return;
+    if (!isTodayLocal(selected)) {
+      setLivePolling(false);
+      return;
+    }
+    setLivePolling(true);
+    const id = window.setInterval(() => {
+      void loadLive({ silent: true });
+    }, 30_000);
+    return () => {
+      window.clearInterval(id);
+      setLivePolling(false);
+    };
+  }, [viewMode, filterMode, selected, apiReady, attendanceRules, loadLive]);
 
   const matrixLabel = useMemo(
     () =>
@@ -402,12 +535,13 @@ export function EmployeeAttendanceView() {
       const dateFrom = toDateInputValue(start);
       const dateTo = toDateInputValue(end);
 
+      const scopedProjectId = projectId || undefined;
       const [sumRes, punchRes, pickerRes, leaveRes] = await Promise.all([
         fetchAttendanceSummary({
           startDate: dateFrom,
           endDate: dateTo,
         }),
-        fetchAttendancePunchesForMatrix({ year, month }),
+        fetchAttendancePunchesForMatrix({ year, month, projectId: scopedProjectId }),
         fetchPickerUsers({ search: search || undefined, limit: MATRIX_ROSTER_LIMIT }),
         fetchLeaveRequests("approved").catch(() => ({ data: [] as Awaited<ReturnType<typeof fetchLeaveRequests>>["data"] })),
       ]);
@@ -422,12 +556,19 @@ export function EmployeeAttendanceView() {
           filter: { kind: "day", day: now },
           page: 1,
           limit: 500,
+          projectId: scopedProjectId,
         });
         monthPunches = mergeAttendanceRecords(monthPunches, todayLog.attendance);
       }
 
-      const baseEmployees = gridEmployeesFromPicker(pickerRes.users);
-      const employees = mergeMatrixEmployees(baseEmployees, monthPunches, search || undefined);
+      const baseEmployees = scopedProjectId
+        ? mergeMatrixEmployees([], monthPunches, search || undefined)
+        : mergeMatrixEmployees(
+            gridEmployeesFromPicker(pickerRes.users),
+            monthPunches,
+            search || undefined,
+          );
+      const employees = baseEmployees;
 
       const campOffUserIds =
         employees.length > MATRIX_CAMPOFF_MAX_USERS
@@ -483,7 +624,7 @@ export function EmployeeAttendanceView() {
     } finally {
       setGridLoading(false);
     }
-  }, [apiReady, attendanceRules, matrixMonth, gridSearchDebounced]);
+  }, [apiReady, attendanceRules, matrixMonth, gridSearchDebounced, projectId]);
 
   useEffect(() => {
     const full = matrixFullGridRef.current;
@@ -680,20 +821,37 @@ export function EmployeeAttendanceView() {
               </span>
             </button>
           </div>
-          {filterMode === "day" ? (
-            <label className="flex flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-fg-muted">
-              {en.attendance.pickDate}
-              <input
-                type="date"
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex min-w-[12rem] flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-fg-muted">
+              {en.attendance.projectFilter}
+              <select
                 className={dateInputClass}
-                value={toDateInputValue(selected)}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v) setSelected(parseDateInputLocal(v));
-                }}
-              />
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+              >
+                <option value="">{en.attendance.projectAll}</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
             </label>
-          ) : null}
+            {filterMode === "day" ? (
+              <label className="flex flex-col gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-fg-muted">
+                {en.attendance.pickDate}
+                <input
+                  type="date"
+                  className={dateInputClass}
+                  value={toDateInputValue(selected)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v) setSelected(parseDateInputLocal(v));
+                  }}
+                />
+              </label>
+            ) : null}
+          </div>
         </div>
 
         {filterMode === "day" ? (
@@ -870,6 +1028,11 @@ export function EmployeeAttendanceView() {
           />
           {en.attendance.refresh}
         </button>
+        {livePolling ? (
+          <span className="inline-flex h-10 items-center rounded-[10px] bg-emerald-500/10 px-3 text-[12px] font-semibold text-emerald-700 dark:text-emerald-300">
+            {en.attendance.livePolling}
+          </span>
+        ) : null}
       </div>
 
       {apiReady && gridError && viewMode === "matrix" ? (

@@ -85,15 +85,15 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        <Suspense fallback={<nav className="flex-1 p-3 pt-4" aria-hidden />}>
+        <Suspense fallback={<nav className="min-h-0 flex-1 p-3 pt-4" aria-hidden />}>
           <SidebarMenu pendingLeaveCount={pendingLeaveCount} />
         </Suspense>
 
-        <div className="border-t border-white/[0.07] p-3">
+        <div className="shrink-0 border-t border-white/[0.07] p-3">
           <button
             type="button"
             onClick={() => void logout()}
-            className="flex h-11 w-full items-center justify-center rounded-[10px] border border-white/[0.09] bg-white/[0.035] text-[12px] font-semibold tracking-wide text-slate-300 transition-[background-color,border-color,color] hover:border-primary/35 hover:bg-white/[0.06] hover:text-white"
+            className="flex h-11 w-full shrink-0 items-center justify-center rounded-[10px] border border-white/[0.09] bg-white/[0.035] text-[12px] font-semibold tracking-wide text-slate-300 transition-[background-color,border-color,color] hover:border-primary/35 hover:bg-white/[0.06] hover:text-white"
           >
             {en.nav.logout}
           </button>

@@ -117,3 +117,57 @@ export function fetchAudit(entityType: string, entityId: string) {
     `audit?entityType=${encodeURIComponent(entityType)}&entityId=${encodeURIComponent(entityId)}`,
   );
 }
+
+export type LeaveBalanceResponse = {
+  balances: Array<{
+    leaveType?: string;
+    type?: string;
+    opening?: number;
+    credited?: number;
+    used?: number;
+    pending?: number;
+    closing?: number;
+    available?: number;
+  }>;
+  campOff?: { available?: number; balance?: number };
+  year: number;
+};
+
+export function fetchMyLeaveRequests() {
+  return hrmBffFetch<{ data: LeaveRequest[] }>("leave/requests/mine");
+}
+
+export function fetchMyLeaveBalance(year?: number) {
+  const q = year ? `?year=${year}` : "";
+  return hrmBffFetch<LeaveBalanceResponse>(`leave/balance${q}`);
+}
+
+export function createLeaveRequest(body: {
+  type: string;
+  startDate: string;
+  endDate: string;
+  reason?: string;
+}) {
+  return hrmBffFetch("leave/requests", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchTeamLeaveApprovals() {
+  return hrmBffFetch<{ data: LeaveRequest[] }>("leave/approvals/team");
+}
+
+export function tlApproveLeave(id: string, comment?: string) {
+  return hrmBffFetch(`leave/requests/${id}/tl-approve`, {
+    method: "POST",
+    body: JSON.stringify({ comment }),
+  });
+}
+
+export function tlRejectLeave(id: string, comment?: string) {
+  return hrmBffFetch(`leave/requests/${id}/tl-reject`, {
+    method: "POST",
+    body: JSON.stringify({ comment }),
+  });
+}

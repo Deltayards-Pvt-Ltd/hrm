@@ -16,8 +16,8 @@ export function NavLinkItem({ href, label, active, nested, Icon, trailing }: Pro
   return (
     <Link
       href={href}
-      className={`relative flex items-center rounded-[10px] pr-3 text-[13px] font-medium tracking-wide transition-colors duration-150 ${
-        nested ? "h-10 gap-2 pl-9" : "h-11 gap-3 pl-[14px]"
+      className={`relative flex shrink-0 items-center rounded-[10px] pr-3 text-[13px] font-medium tracking-wide transition-colors duration-150 ${
+        nested ? "h-10 min-h-10 gap-2 pl-9" : "h-11 min-h-11 gap-3 pl-[14px]"
       } ${
         active
           ? nested

@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const cookie = request.headers.get("cookie");
   if (cookie) headers.set("cookie", cookie);
 
-  const upstream = await fetchUpstream(`${base}/api/superadmin/me`, {
+  const upstream = await fetchUpstream(`${base}/api/hrm/me`, {
     method: "GET",
     headers,
   });
